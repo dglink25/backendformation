@@ -21,6 +21,7 @@ class User extends Authenticatable
         'profile_completed',
         'role_selected_at',
         'onboarding_step',
+        'email_verified_at', 
     ];
 
     protected $hidden = [

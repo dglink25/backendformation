@@ -15,7 +15,7 @@ use Carbon\Carbon;
 class AuthController extends Controller
 {
     /**
-     * Inscription avec envoi d'email de vérification
+     * ✅ INSCRIPTION avec vérification d'email obligatoire
      */
     public function register(Request $request)
     {
@@ -32,20 +32,23 @@ class AuthController extends Controller
                 'password' => Hash::make($request->password),
                 'role' => 'apprenant',
                 'onboarding_step' => 'role',
-                'email_verified_at' => null, // Email non vérifié
+                'email_verified_at' => null, // ✅ Email NON vérifié
+                'is_active' => true,
             ]);
 
-            // Envoyer l'email de vérification
+            // ✅ Envoyer l'email de vérification
             $this->sendVerificationEmail($user);
 
-            Log::info('Nouvel utilisateur inscrit', [
+            Log::info('✅ Nouvel utilisateur inscrit - Email de vérification envoyé', [
                 'user_id' => $user->id,
                 'email' => $user->email
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Inscription réussie. Un email de vérification vous a été envoyé.',
+                'message' => 'Inscription réussie ! Veuillez consulter votre email pour confirmer votre adresse.',
+                'email' => $user->email,
+                'requires_verification' => true,
             ], 201);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -56,7 +59,7 @@ class AuthController extends Controller
             ], 422);
 
         } catch (\Exception $e) {
-            Log::error('Erreur inscription:', ['error' => $e->getMessage()]);
+            Log::error('❌ Erreur inscription:', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur lors de l\'inscription',
@@ -65,7 +68,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Connexion
+     * ✅ CONNEXION - Bloque si email non vérifié
      */
     public function login(Request $request)
     {
@@ -78,27 +81,50 @@ class AuthController extends Controller
             $user = User::where('email', $request->email)->first();
 
             if (!$user || !Hash::check($request->password, $user->password)) {
+                Log::warning('❌ Échec connexion - Credentials invalides', [
+                    'email' => $request->email,
+                    'user_exists' => !is_null($user),
+                ]);
+                
                 return response()->json([
                     'success' => false,
                     'message' => 'Email ou mot de passe incorrect',
                 ], 401);
             }
 
+            // ✅ Log détaillé de l'état de l'utilisateur
+            Log::info('🔐 Tentative de connexion', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'is_active' => $user->is_active,
+                'email_verified_at' => $user->email_verified_at,
+                'email_verified' => !is_null($user->email_verified_at),
+            ]);
+
             if (!$user->is_active) {
+                Log::warning('❌ Compte désactivé', ['user_id' => $user->id]);
+                
                 return response()->json([
                     'success' => false,
                     'message' => 'Votre compte a été désactivé',
                 ], 403);
             }
 
-            // Vérifier si l'email est vérifié (optionnel - à activer si nécessaire)
-            // if (!$user->email_verified_at) {
-            //     return response()->json([
-            //         'success' => false,
-            //         'message' => 'Veuillez vérifier votre email avant de vous connecter',
-            //         'email_verified' => false,
-            //     ], 403);
-            // }
+            // ✅ VÉRIFICATION EMAIL OBLIGATOIRE
+            if (!$user->email_verified_at) {
+                Log::warning('❌ Email non vérifié', [
+                    'user_id' => $user->id,
+                    'email' => $user->email,
+                    'email_verified_at' => $user->email_verified_at,
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Veuillez vérifier votre adresse email avant de vous connecter. Consultez votre boîte de réception.',
+                    'email_verified' => false,
+                    'email' => $user->email,
+                ], 403);
+            }
 
             // Charger les relations
             $user->load(['profile', 'domaines']);
@@ -109,7 +135,7 @@ class AuthController extends Controller
             // Déterminer si l'onboarding est nécessaire
             $needsOnboarding = $user->needsOnboarding();
 
-            Log::info('Connexion réussie', [
+            Log::info('✅ Connexion réussie', [
                 'user_id' => $user->id,
                 'needs_onboarding' => $needsOnboarding,
             ]);
@@ -126,7 +152,7 @@ class AuthController extends Controller
                     'domaines' => $user->domaines,
                     'needs_onboarding' => $needsOnboarding,
                     'onboarding_step' => $user->onboarding_step,
-                    'email_verified' => !is_null($user->email_verified_at),
+                    'email_verified' => true,
                 ],
             ]);
 
@@ -138,7 +164,11 @@ class AuthController extends Controller
             ], 422);
 
         } catch (\Exception $e) {
-            Log::error('Erreur connexion:', ['error' => $e->getMessage()]);
+            Log::error('❌ Erreur connexion:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur lors de la connexion',
@@ -147,25 +177,35 @@ class AuthController extends Controller
     }
 
     /**
-     * Vérifier l'email
+     * ✅ VÉRIFIER L'EMAIL avec le token
      */
     public function verifyEmail(Request $request)
     {
         try {
+            Log::info('📧 Tentative de vérification d\'email', [
+                'email' => $request->email,
+                'has_token' => !empty($request->token),
+            ]);
+
             $request->validate([
-                'token' => 'required',
+                'token' => 'required|string',
                 'email' => 'required|email',
             ]);
 
+            // Chercher le token de vérification
             $verification = DB::table('email_verifications')
                 ->where('email', $request->email)
                 ->where('token', $request->token)
                 ->first();
 
             if (!$verification) {
+                Log::warning('⚠️ Token de vérification invalide', [
+                    'email' => $request->email,
+                ]);
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Lien de vérification invalide',
+                    'message' => 'Lien de vérification invalide ou expiré',
                 ], 400);
             }
 
@@ -174,13 +214,18 @@ class AuthController extends Controller
             if ($createdAt->addHours(24)->isPast()) {
                 DB::table('email_verifications')->where('email', $request->email)->delete();
                 
+                Log::warning('⚠️ Token de vérification expiré', [
+                    'email' => $request->email,
+                ]);
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ce lien de vérification a expiré',
+                    'message' => 'Ce lien de vérification a expiré. Veuillez demander un nouveau lien.',
+                    'expired' => true,
                 ], 400);
             }
 
-            // Vérifier l'utilisateur
+            // Trouver l'utilisateur
             $user = User::where('email', $request->email)->first();
             
             if (!$user) {
@@ -190,7 +235,7 @@ class AuthController extends Controller
                 ], 404);
             }
 
-            // Marquer l'email comme vérifié
+            // ✅ Marquer l'email comme vérifié
             $user->update([
                 'email_verified_at' => now(),
             ]);
@@ -198,15 +243,26 @@ class AuthController extends Controller
             // Supprimer le token
             DB::table('email_verifications')->where('email', $request->email)->delete();
 
-            Log::info('Email vérifié', ['user_id' => $user->id]);
+            Log::info('✅ Email vérifié avec succès', ['user_id' => $user->id]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Email vérifié avec succès',
+                'message' => 'Votre email a été vérifié avec succès ! Vous pouvez maintenant vous connecter.',
             ]);
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Données invalides',
+                'errors' => $e->errors(),
+            ], 422);
+
         } catch (\Exception $e) {
-            Log::error('Erreur verifyEmail:', ['error' => $e->getMessage()]);
+            Log::error('❌ Erreur verifyEmail:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur lors de la vérification',
@@ -215,7 +271,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Renvoyer l'email de vérification
+     * ✅ RENVOYER l'email de vérification
      */
     public function resendVerification(Request $request)
     {
@@ -239,17 +295,59 @@ class AuthController extends Controller
             // Envoyer un nouveau mail
             $this->sendVerificationEmail($user);
 
+            Log::info('📧 Email de vérification renvoyé', ['email' => $request->email]);
+
             return response()->json([
                 'success' => true,
-                'message' => 'Email de vérification renvoyé',
+                'message' => 'Email de vérification renvoyé avec succès',
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Erreur resendVerification:', ['error' => $e->getMessage()]);
+            Log::error('❌ Erreur resendVerification:', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur lors de l\'envoi',
             ], 500);
+        }
+    }
+
+    /**
+     * ✅ ENVOYER l'email de vérification
+     */
+    private function sendVerificationEmail($user)
+    {
+        // Créer un token unique
+        $token = Str::random(64);
+
+        // Stocker dans la DB
+        DB::table('email_verifications')->insert([
+            'email' => $user->email,
+            'token' => $token,
+            'created_at' => now(),
+        ]);
+
+        // Créer le lien de vérification
+        $verificationLink = env('FRONTEND_URL', 'http://localhost:5173') . 
+                           '/verify-email?token=' . $token . 
+                           '&email=' . urlencode($user->email);
+
+        // Envoyer l'email
+        try {
+            Mail::send('emails.verify-email', [
+                'user' => $user,
+                'verificationLink' => $verificationLink,
+            ], function ($message) use ($user) {
+                $message->to($user->email);
+                $message->subject('Vérifiez votre adresse email - E-Learning Platform');
+            });
+
+            Log::info('📧 Email de vérification envoyé', ['email' => $user->email]);
+
+        } catch (\Exception $e) {
+            Log::error('❌ Erreur envoi email de vérification:', [
+                'email' => $user->email,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 
@@ -272,7 +370,6 @@ class AuthController extends Controller
                 ], 422);
             }
 
-            // Marquer comme confirmé (stocké côté frontend)
             return response()->json([
                 'success' => true,
                 'message' => 'Mot de passe confirmé',
@@ -425,46 +522,6 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Erreur lors de la réinitialisation',
             ], 500);
-        }
-    }
-
-    /**
-     * Envoyer l'email de vérification
-     */
-    private function sendVerificationEmail($user)
-    {
-        // Créer un token
-        $token = Str::random(64);
-
-        // Stocker dans la DB
-        DB::table('email_verifications')->insert([
-            'email' => $user->email,
-            'token' => $token,
-            'created_at' => now(),
-        ]);
-
-        // Créer le lien
-        $verificationLink = env('FRONTEND_URL', 'http://localhost:5173') . 
-                           '/verify-email?token=' . $token . 
-                           '&email=' . urlencode($user->email);
-
-        // Envoyer l'email
-        try {
-            Mail::send('emails.verify-email', [
-                'user' => $user,
-                'verificationLink' => $verificationLink,
-            ], function ($message) use ($user) {
-                $message->to($user->email);
-                $message->subject('Vérifiez votre adresse email - E-Learning Platform');
-            });
-
-            Log::info('Email de vérification envoyé', ['email' => $user->email]);
-
-        } catch (\Exception $e) {
-            Log::error('Erreur envoi email de vérification:', [
-                'email' => $user->email,
-                'error' => $e->getMessage(),
-            ]);
         }
     }
 
