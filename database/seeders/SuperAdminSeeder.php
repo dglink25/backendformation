@@ -9,8 +9,7 @@ use Spatie\Permission\Models\Role;
 
 class SuperAdminSeeder extends Seeder
 {
-    public function run(): void
-    {
+    public function run(): void{
         // Créer les rôles
         Role::firstOrCreate(['name' => 'super_admin', 'guard_name' => 'web']);
         Role::firstOrCreate(['name' => 'formateur', 'guard_name' => 'web']);

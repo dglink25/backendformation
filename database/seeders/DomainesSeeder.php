@@ -7,8 +7,7 @@ use App\Models\Domaine;
 
 class DomainesSeeder extends Seeder
 {
-    public function run(): void
-    {
+    public function run(): void{
         $domaines = [
             [
                 'name' => 'Développement Web',
