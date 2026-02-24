@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -19,10 +20,19 @@ return new class extends Migration
             $table->string('phone_number')->nullable()->after('user_id');
             $table->string('customer_email')->nullable()->after('phone_number');
             $table->string('customer_name')->nullable()->after('customer_email');
-
-            // Transformer metadata en JSON
-            $table->json('metadata')->nullable()->change();
         });
+
+        // 🔥 Conversion propre de metadata vers JSONB (PostgreSQL)
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN metadata TYPE jsonb
+            USING metadata::jsonb
+        ');
+
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN metadata DROP NOT NULL
+        ');
     }
 
     public function down(): void
@@ -37,5 +47,12 @@ return new class extends Migration
                 'customer_name',
             ]);
         });
+
+        // Optionnel : remettre metadata en text si rollback
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN metadata TYPE text
+            USING metadata::text
+        ');
     }
 };

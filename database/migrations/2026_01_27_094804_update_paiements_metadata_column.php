@@ -1,32 +1,44 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
-        Schema::table('paiements', function (Blueprint $table) {
-            // Changer le type de metadata et fedapay_response en JSON
-            // Si vous avez des erreurs, utilisez TEXT au lieu de JSON
-            $table->json('metadata')->nullable()->change();
-            $table->json('fedapay_response')->nullable()->change();
-        });
+        // Conversion metadata en jsonb
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN metadata TYPE jsonb
+            USING metadata::jsonb
+        ');
+
+        // Conversion fedapay_response en jsonb
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN fedapay_response TYPE jsonb
+            USING fedapay_response::jsonb
+        ');
+
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN fedapay_response DROP NOT NULL
+        ');
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::table('paiements', function (Blueprint $table) {
-            $table->text('metadata')->nullable()->change();
-            $table->text('fedapay_response')->nullable()->change();
-        });
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN metadata TYPE text
+            USING metadata::text
+        ');
+
+        DB::statement('
+            ALTER TABLE paiements
+            ALTER COLUMN fedapay_response TYPE text
+            USING fedapay_response::text
+        ');
     }
 };
